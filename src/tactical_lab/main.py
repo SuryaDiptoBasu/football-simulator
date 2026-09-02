@@ -1,4 +1,9 @@
-from tactical_lab.models.player import Player
+import argparse
+
+from tactical_lab.models.clubs import get_club, get_club_names
+from tactical_lab.models.formations import get_formation_positions
+from tactical_lab.models.formations import FORMATION_POSITIONS
+from tactical_lab.models.player import Player, Position
 from tactical_lab.models.team import Tactics, Team
 from tactical_lab.simulation.engine import MatchEngine
 
@@ -9,25 +14,13 @@ def create_team(
     tactics: Tactics,
 ) -> Team:
 
-    positions = [
-        "GK",
-        "DEF",
-        "DEF",
-        "DEF",
-        "DEF",
-        "MID",
-        "MID",
-        "MID",
-        "FWD",
-        "FWD",
-        "FWD",
-    ]
+    positions = get_formation_positions(tactics.formation)
 
     players = []
 
     for i, position in enumerate(positions, start=1):
 
-        if position == "GK":
+        if position == Position.GK:
             player = Player(
                 id=i,
                 name=f"{name} Player {i}",
@@ -39,7 +32,7 @@ def create_team(
                 stamina=70,
             )
 
-        elif position == "DEF":
+        elif position in {Position.LB, Position.CB, Position.RB}:
             player = Player(
                 id=i,
                 name=f"{name} Player {i}",
@@ -51,7 +44,7 @@ def create_team(
                 stamina=80,
             )
 
-        elif position == "MID":
+        elif position in {Position.DM, Position.CM, Position.AM}:
             player = Player(
                 id=i,
                 name=f"{name} Player {i}",
@@ -93,25 +86,38 @@ def format_time(seconds: int) -> str:
 
 
 def main():
-    home_team = create_team(
-        1,
-        "Manchester United",
-        Tactics(
-            formation="4-3-3",
-            pressing="high",
-            passing_style="short",
-        ),
+    parser = argparse.ArgumentParser(
+        description="Simulate one football match between two clubs."
     )
+    parser.add_argument(
+        "--home",
+        choices=get_club_names(),
+        default="manchester-city",
+    )
+    parser.add_argument(
+        "--away",
+        choices=get_club_names(),
+        default="real-madrid",
+    )
+    parser.add_argument(
+        "--home-formation",
+        choices=tuple(FORMATION_POSITIONS),
+    )
+    parser.add_argument(
+        "--away-formation",
+        choices=tuple(FORMATION_POSITIONS),
+    )
+    args = parser.parse_args()
 
-    away_team = create_team(
-        2,
-        "Manchester City",
-        Tactics(
-            formation="4-2-3-1",
-            pressing="low",
-            passing_style="direct",
-            counter_attack=True,
-        ),
+    home_team = get_club(
+        args.home,
+        team_id=1,
+        formation=args.home_formation,
+    )
+    away_team = get_club(
+        args.away,
+        team_id=2,
+        formation=args.away_formation,
     )
 
     engine = MatchEngine(
@@ -125,6 +131,10 @@ def main():
     print("\n============================")
     print("       TACTICAL LAB")
     print("============================\n")
+    print(
+        f"{home_team.name} ({home_team.tactics.formation}) "
+        f"vs {away_team.name} ({away_team.tactics.formation})\n"
+    )
 
     for event in engine.events:
         time = format_time(event.timestamp)
@@ -163,7 +173,10 @@ def main():
             output += f" | {team.name}"
 
         if player_name:
-            output += f" | {player_name}"
+            if event.event_type.value == "GOAL":
+                output += f" | Scorer: {player_name}"
+            else:
+                output += f" | {player_name}"
 
         if event.event_type.value == "PASS":
             target_id = event.data.get(
@@ -195,6 +208,36 @@ def main():
         f"{away_team.name} "
         f"{result.away_score}"
     )
+
+    goal_events = [
+        event
+        for event in engine.events
+        if event.event_type.value == "GOAL"
+    ]
+
+    for event in goal_events:
+        team = (
+            home_team
+            if event.team_id == home_team.id
+            else away_team
+        )
+        scorer = next(
+            (
+                player
+                for player in team.players
+                if player.id == event.player_id
+            ),
+            None,
+        )
+        scorer_name = (
+            scorer.name
+            if scorer
+            else "Unknown scorer"
+        )
+        print(
+            f"{format_time(event.timestamp)} | "
+            f"{team.name} | {scorer_name}"
+        )
 
     stats = result.stats
 

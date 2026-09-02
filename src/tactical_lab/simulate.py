@@ -1,6 +1,11 @@
+import argparse
+
 from tactical_lab.main import create_team
+from tactical_lab.models.clubs import get_club, get_club_names
+from tactical_lab.models.formations import FORMATION_POSITIONS
 from tactical_lab.models.team import Tactics
 from tactical_lab.simulation.engine import MatchEngine
+from tactical_lab.simulation.experiments import run_experiment
 
 
 NUM_SIMULATIONS = 1000
@@ -100,31 +105,97 @@ def run_simulations(
 
 
 def main():
-    home_team = create_team(
-        1,
-        "Red United",
-        Tactics(
-            formation="4-3-3",
-            pressing="high",
-            passing_style="short",
-        ),
+    parser = argparse.ArgumentParser(
+        description="Compare two football clubs over repeated simulations."
+    )
+    parser.add_argument(
+        "--home",
+        choices=get_club_names(),
+        default="manchester-city",
+    )
+    parser.add_argument(
+        "--away",
+        choices=get_club_names(),
+        default="real-madrid",
+    )
+    parser.add_argument(
+        "--home-formation",
+        choices=tuple(FORMATION_POSITIONS),
+    )
+    parser.add_argument(
+        "--away-formation",
+        choices=tuple(FORMATION_POSITIONS),
+    )
+    parser.add_argument(
+        "--simulations",
+        type=int,
+        default=NUM_SIMULATIONS,
+    )
+    args = parser.parse_args()
+
+    home_team = get_club(
+        args.home,
+        team_id=1,
+        formation=args.home_formation,
+    )
+    away_team = get_club(
+        args.away,
+        team_id=2,
+        formation=args.away_formation,
     )
 
-    away_team = create_team(
-        2,
-        "Blue City",
-        Tactics(
-            formation="4-2-3-1",
-            pressing="low",
-            passing_style="direct",
-            counter_attack=True,
-        ),
-    )
-
-    run_simulations(
+    result = run_experiment(
         home_team,
         away_team,
-        NUM_SIMULATIONS,
+        args.simulations,
+        seed=42,
+    )
+
+    print("\n============================")
+    print("     TACTICAL EXPERIMENT")
+    print("============================\n")
+    print(
+        f"{home_team.name} vs {away_team.name}"
+    )
+    print(
+        f"Formations: {home_team.tactics.formation} | "
+        f"{away_team.tactics.formation}"
+    )
+    print(f"Simulations: {result.simulations}\n")
+
+    print(
+        f"Wins: {home_team.name} {result.home_wins} "
+        f"({result.home_wins / result.simulations * 100:.2f}%) | "
+        f"{away_team.name} {result.away_wins} "
+        f"({result.away_wins / result.simulations * 100:.2f}%) | "
+        f"Draws {result.draws} "
+        f"({result.draws / result.simulations * 100:.2f}%)"
+    )
+
+    print("\nAverage metrics:")
+    print(
+        f"Goals:         {result.home_goals:.2f} | "
+        f"{result.away_goals:.2f}"
+    )
+    print(
+        f"Possession:    {result.home_possession:.1f}% | "
+        f"{result.away_possession:.1f}%"
+    )
+    print(
+        f"Passes:        {result.home_passes:.2f} | "
+        f"{result.away_passes:.2f}"
+    )
+    print(
+        f"Interceptions: {result.home_interceptions:.2f} | "
+        f"{result.away_interceptions:.2f}"
+    )
+    print(
+        f"Progressions:  {result.home_progressions:.2f} | "
+        f"{result.away_progressions:.2f}"
+    )
+    print(
+        f"Shots:         {result.home_shots:.2f} | "
+        f"{result.away_shots:.2f}"
     )
 
 

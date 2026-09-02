@@ -23,4 +23,6 @@ class Team:
 
     players: list[Player] = field(default_factory=list)
 
+    squad: list[Player] = field(default_factory=list)
+
     tactics: Tactics = field(default_factory=Tactics)

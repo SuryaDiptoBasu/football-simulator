@@ -3,6 +3,11 @@ import random
 from tactical_lab.models.match import MatchState
 from tactical_lab.simulation.events import EventType, MatchEvent
 from tactical_lab.models.field import BallZone
+from tactical_lab.models.player import Position
+from tactical_lab.models.formations import (
+    get_passing_positions,
+    get_progression_positions,
+)
 
 class MatchEngine:
     def __init__(self, home_team, away_team, seed: int | None = None):
@@ -43,7 +48,7 @@ class MatchEngine:
 
             #self.state.possession_team_id = team.id
 
-            player = self._choose_possession_player(team)
+            player = self._choose_defensive_player(team)
 
             #self.state.ball_player_id = player.id
 
@@ -107,7 +112,8 @@ class MatchEngine:
         team_stats.possession_ticks += 1
 
         action = self._choose_action(
-            attacking_team
+            attacking_team,
+            defending_team,
         )
 
         
@@ -132,6 +138,8 @@ class MatchEngine:
                 0.50
                 + attacking_player.passing / 200
                 + passing_modifier
+                + (attacking_player.stamina - 75) / 1000
+                + (attacking_player.dribbling - 75) / 2000
             )
 
             pass_success_probability = max(
@@ -150,7 +158,15 @@ class MatchEngine:
 
                 if self.state.ball_zone < BallZone.ATTACKING:
 
-                    progression_probability = 0.35
+                    progression_probability = (
+                        0.35
+                        + (target_player.pace - 75) / 1000
+                        + (target_player.dribbling - 75) / 2000
+                    )
+                    progression_probability = max(
+                        0.25,
+                        min(progression_probability, 0.45),
+                    )
 
                     if self.random.random() < progression_probability:
 
@@ -175,11 +191,15 @@ class MatchEngine:
                 # PASS FAILED → opponent wins possession
                 self.state.possession_team_id = defending_team.id
 
-                new_player = self._choose_possession_player(
+                new_player = self._choose_defensive_player(
                     defending_team
                 )
 
-                self.state.ball_player_id = new_player.id
+                self._change_possession(
+                    defending_team,
+                    new_player,
+                    BallZone.DEFENSIVE,
+                )
 
                 self._emit(
                     EventType.INTERCEPTION,
@@ -188,7 +208,7 @@ class MatchEngine:
                 )
 
         elif action == "interception":
-            new_player = self._choose_possession_player(
+            new_player = self._choose_defensive_player(
                 defending_team
             )
 
@@ -226,17 +246,25 @@ class MatchEngine:
                 player_id=attacking_player.id,
             )
 
-            goal_probability = (
-                0.05
-                + attacking_player.shooting / 500
-                + shot_modifier
+            goalkeeper = self._get_goalkeeper(defending_team)
+            goalkeeper_penalty = (
+                goalkeeper.defending / 4000
+                if goalkeeper
+                else 0
             )
 
-            goal_probability += shot_modifier
+            goal_probability = (
+                0.02
+                + attacking_player.shooting / 700
+                + attacking_player.dribbling / 4000
+                + attacking_player.physical / 6000
+                + shot_modifier
+                - goalkeeper_penalty
+            )
 
             goal_probability = max(
-                0.05,
-                min(goal_probability, 0.40),
+                0.03,
+                min(goal_probability, 0.30),
             )
 
             if self.random.random() < goal_probability:
@@ -247,7 +275,7 @@ class MatchEngine:
 
             else:
         
-                new_player = self._choose_possession_player(
+                new_player = self._choose_defensive_player(
                     defending_team
                 )
 
@@ -264,6 +292,13 @@ class MatchEngine:
 
             team_stats.progressions += 1
             current_zone = self.state.ball_zone
+            progression_target = self._choose_progression_target(
+                attacking_team,
+                attacking_player,
+            )
+
+            if progression_target:
+                self.state.ball_player_id = progression_target.id
 
             if current_zone < BallZone.BOX:
 
@@ -276,7 +311,11 @@ class MatchEngine:
                 self._emit(
                     EventType.PROGRESSION,
                     team_id=attacking_team.id,
-                    player_id=attacking_player.id,
+                    player_id=(
+                        progression_target.id
+                        if progression_target
+                        else attacking_player.id
+                    ),
                     data={
                         "from_zone": current_zone.name,
                         "to_zone": next_zone.name,
@@ -316,8 +355,32 @@ class MatchEngine:
             player
             for player in team.players
             if player.id != current_player.id
-            and player.position != "GK"
+            and player.position != Position.GK
+            and player.position
+            in get_passing_positions(current_player.position)
         ]
+
+        if not candidates:
+            candidates = [
+                player
+                for player in team.players
+                if player.id != current_player.id
+                and player.position != Position.GK
+            ]
+
+        return self.random.choice(candidates)
+
+    def _choose_progression_target(self, team, current_player):
+        candidates = [
+            player
+            for player in team.players
+            if player.id != current_player.id
+            and player.position
+            in get_progression_positions(current_player.position)
+        ]
+
+        if not candidates:
+            return None
 
         return self.random.choice(candidates)
 
@@ -348,8 +411,28 @@ class MatchEngine:
         players = [
             player
             for player in team.players
-            if player.position != "GK"
+            if player.position != Position.GK
         ]
+
+        return self.random.choice(players)
+
+    def _choose_defensive_player(self, team):
+        defensive_positions = {
+            Position.LB,
+            Position.CB,
+            Position.RB,
+            Position.DM,
+            Position.CM,
+        }
+
+        players = [
+            player
+            for player in team.players
+            if player.position in defensive_positions
+        ]
+
+        if not players:
+            return self._choose_possession_player(team)
 
         return self.random.choice(players)
 
@@ -404,7 +487,7 @@ class MatchEngine:
         self.state.ball_player_id = player.id
         self.state.ball_zone = zone
 
-    def _choose_action(self, team):
+    def _choose_action(self, team, defending_team):
         zone = self.state.ball_zone
 
         if zone == BallZone.DEFENSIVE:
@@ -465,11 +548,50 @@ class MatchEngine:
                 60,
             ]
 
+        attribute_weights = {
+            "pass": 1 + (self._get_team_average(team, "passing") - 75) / 20,
+            "interception": 1 + (
+                self._get_team_average(defending_team, "defending") - 75
+            ) / 20,
+            "progress": 1 + (
+                self._get_team_average(team, "pace")
+                + self._get_team_average(team, "dribbling")
+                - 150
+            ) / 40,
+            "shot": 1 + (self._get_team_average(team, "shooting") - 75) / 20,
+        }
+        adjusted_weights = [
+            max(1, weight * attribute_weights[action])
+            for action, weight in zip(actions, weights)
+        ]
+
         return self.random.choices(
             actions,
-            weights=weights,
+            weights=adjusted_weights,
             k=1,
         )[0]
+
+    def _get_team_average(self, team, attribute: str) -> float:
+        players = [
+            player
+            for player in team.players
+            if player.position != Position.GK
+        ]
+
+        if not players:
+            return 0
+
+        return sum(getattr(player, attribute) for player in players) / len(players)
+
+    def _get_goalkeeper(self, team):
+        return next(
+            (
+                player
+                for player in team.players
+                if player.position == Position.GK
+            ),
+            None,
+        )
 
     def _get_team_stats(self, team_id: int):
         if team_id == self.state.home_team.id:
