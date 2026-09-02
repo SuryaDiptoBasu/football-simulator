@@ -7,6 +7,19 @@ engine creates match events such as passes, progressions, interceptions,
 shots, and goals. You can also run the same matchup many times to see which
 team usually comes out on top.
 
+## Use the app
+
+Install the project dependencies and start the Streamlit app:
+
+```bash
+uv sync
+uv run streamlit run app.py
+```
+
+Then open the local address shown in the terminal. The app lets you choose
+the home club, away club, formation for each side, and whether to play one
+match or run many simulations.
+
 ## Run one match
 
 This prints the match events, final score, scorers, and match statistics.
